@@ -1,0 +1,299 @@
+---
+title: "ParvinAnalysis"
+output: html_document
+date: "2024-06-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading in Dataset
+This section loads in the data sets and cleans it up into a full dataset with gene names. 
+```{r}
+library(readr)
+library(BiocManager)
+library(org.Hs.eg.db)
+#library(annotate)
+IGandIF <- read_tsv("./IFvsIG.tabular")
+SGandSF<- read_tsv("./SGvsSF.tabular")
+
+#selecting only columns of interest
+IGandIF<-IGandIF[, c(1, 2, 4, 6, 8, 10, 12)]
+SGandSF<-SGandSF[, c(1, 2, 4, 6, 8, 10, 12)]
+
+#Changing column names 
+colnames(IGandIF)<-c("GeneID","IF3","IF2","IF1","IG3","IG2","IG1")
+colnames(SGandSF)<-c("GeneID","SF3","SF2","SF1","SG3","SG2","SG1")
+
+#Merging Datasets
+fullData<-merge(IGandIF,SGandSF,by="GeneID",all=TRUE)
+
+#Getting GeneSymbols
+gene_symbols <- select(org.Hs.eg.db, keys = as.character(fullData$GeneID), columns = "SYMBOL", keytype = "ENTREZID")
+
+fullData$GeneSymbol<-gene_symbols$SYMBOL
+
+```
+
+```{r}
+library(writexl)
+write_xlsx(fullData,"./ParvinTranscriptomic.xlsx")
+```
+
+
+## Second Analysis using limma/voom
+Maybe splitting up datasets into I and S will help.
+
+### I
+```{r}
+ICounts<-counts[,c(1:4,8:10)]
+#Analysis
+d0 <- DGEList(ICounts)
+d0 <- calcNormFactors(d0)
+
+cutoff <- 1
+drop <- which(apply(cpm(d0), 1, max) < cutoff)
+d <- d0[-drop,] 
+dim(d)
+
+I_group_labels<- c("IG","IG","IG","IF","IF","IF")
+I_groups<-factor(I_group_labels)
+
+#plot MDS
+plotMDS(d, col = as.numeric(I_groups))
+```
+
+```{r}
+mm <- model.matrix(~0 + I_groups)
+y <- voom(d, mm, plot = T)
+tmp <- voom(d0, mm, plot = T)
+
+fit <- lmFit(y, mm)
+head(coef(fit))
+```
+```{r}
+contr <- makeContrasts(I_groupsIG - I_groupsIF, levels = colnames(coef(fit)))
+contr
+
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 20)
+
+```
+
+```{r}
+write_xlsx(top.table,"./IMR90_IFvsIG_Separated.xlsx")
+```
+
+### S
+```{r}
+SCounts<-counts[,c(1,5:7,11:13)]
+#Analysis
+d0 <- DGEList(SCounts)
+d0 <- calcNormFactors(d0)
+
+cutoff <- 1
+drop <- which(apply(cpm(d0), 1, max) < cutoff)
+d <- d0[-drop,] 
+dim(d)
+
+S_group_labels<- c("SG","SG","SG","SF","SF","SF")
+S_groups<-factor(S_group_labels)
+
+#plot MDS
+plotMDS(d, col = as.numeric(S_groups))
+```
+
+```{r}
+mm <- model.matrix(~0 + S_groups)
+y <- voom(d, mm, plot = T)
+tmp <- voom(d0, mm, plot = T)
+
+fit <- lmFit(y, mm)
+head(coef(fit))
+```
+```{r}
+contr <- makeContrasts(S_groupsSG - S_groupsSF, levels = colnames(coef(fit)))
+contr
+
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 20)
+
+```
+
+```{r}
+write_xlsx(top.table,"./SCVI_SFvsSG_Separated.xlsx")
+```
+
+
+
+## Analysis using limma/voom
+Following this tutorial: https://ucdavis-bioinformatics-training.github.io/2018-June-RNA-Seq-Workshop/thursday/DE.html 
+
+```{r}
+library(edgeR)
+
+counts<-fullData[,c(14,7,6,5,13,12,11,4,3,2,10,9,8)]#rearranging columns
+
+#Analysis
+d0 <- DGEList(counts)
+d0 <- calcNormFactors(d0)
+
+cutoff <- 1
+drop <- which(apply(cpm(d0), 1, max) < cutoff)
+d <- d0[-drop,] 
+dim(d)
+
+#Creating groups
+group_labels<- c("IG","IG","IG","SG","SG","SG","IF","IF","IF","SF","SF","SF")
+groups<-factor(group_labels)
+```
+### MDS
+```{r}
+plotMDS(d, col = as.numeric(groups))
+```
+ 
+### Voom
+```{r}
+mm <- model.matrix(~0 + groups)
+y <- voom(d, mm, plot = T)
+tmp <- voom(d0, mm, plot = T)
+
+```
+
+```{r}
+fit <- lmFit(y, mm)
+head(coef(fit))
+```
+
+## IG vs IF
+```{r}
+contr <- makeContrasts(groupsIG - groupsIF, levels = colnames(coef(fit)))
+contr
+```
+
+```{r}
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 20)
+```
+
+```{r}
+library(writexl)
+write_xlsx(top.table,"./IMR90_IFvsIG.xlsx")
+```
+
+## SG vs SF
+```{r}
+contr <- makeContrasts(groupsSG - groupsSF, levels = colnames(coef(fit)))
+contr
+```
+
+```{r}
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 20)
+```
+
+```{r}
+
+write_xlsx(top.table,"./SCVI_SFvsSG.xlsx")
+```
+
+## Creating Volcano Plots
+
+##IMR90
+```{r}
+library("readxl")
+library(tidyverse)
+library(RColorBrewer)
+library(ggrepel)
+#reading in dataset
+df <- read_excel("./IMR90_IFvsIG_Separated.xlsx")
+#adding differentially expressed label
+df$diffexpressed <- "NO"
+df$diffexpressed[df$logFC >  1 & df$P.Value < 0.05] <- "UP"
+df$diffexpressed[df$logFC < -1 & df$P.Value < 0.05] <- "DOWN"
+
+# Create a new column "delabel" to de, that will contain the name of the top 30 differentially expressed genes (NA in case they are not)
+#df$delabel <- ifelse(df$GeneSymbol %in% head(df[order(df$P.Value), "GeneSymbol"], 10), df$GeneSymbol, NA)
+#above line is't working, but the dfs is already sorted in ascending p value so this works
+df$delabel<- NA
+df$delabel[1:10]<- df$GeneSymbol[1:10]
+```
+
+```{r}
+#Set Theme
+theme_set(theme_classic(base_size = 20) +
+            theme(
+              axis.title.y = element_text(face = "bold", margin = margin(0,20,0,0), size = 16, color = 'black'),
+              axis.title.x = element_text(hjust = 0.5, face = "bold", margin = margin(20,0,0,0), size = 16, color = 'black'),
+              plot.title = element_text(hjust = 0.5)
+            ))
+
+
+# Edit axis labels and limits
+ggplot(data = df, aes(x = logFC, y =-log10(P.Value), col = diffexpressed,label=delabel)) +
+  geom_vline(xintercept = c(-1, 1), col = "gray", linetype = 'dashed') +
+  geom_hline(yintercept = -log10(0.05), col = "gray", linetype = 'dashed') + 
+  geom_point(size = 2) + 
+  scale_color_manual(values = c("#0000FF", "grey", "#FF0000"), # to set the colours of our variable  
+                     labels = c("Downregulated", "Not significant", "Upregulated")) + # to set the labels in case we want to overwrite the categories from the dataframe (UP, DOWN, NO)
+  coord_cartesian(ylim = c(0, 10), xlim = c(-5, 5)) + # since some genes can have minuslog10padj of inf, we set these limits
+  labs(color="", #legend_title, 
+       x = expression("Log"[2]*"(FC)"), y = expression("-Log"[10]*"(P-Value)")) + 
+  scale_x_continuous(breaks = seq(-10, 10, 2))+ # to customise the breaks in the x axis
+  geom_text_repel(max.overlaps = Inf)
+
+ggsave(file = "./IF_vs_IG_Unadjusted.tiff", width = 7, height = 7, dpi = 300, device = "tiff", units = "in")
+```
+
+
+## SCVI
+```{r}
+
+#reading in dataset
+df <- read_excel("./SCVI_SFvsSG_Separated.xlsx")
+#adding differentially expressed label
+df$diffexpressed <- "NO"
+df$diffexpressed[df$logFC >  1 & df$adj.P.Val < 0.05] <- "UP"
+df$diffexpressed[df$logFC < -1 & df$adj.P.Val < 0.05] <- "DOWN"
+
+# Create a new column "delabel" to de, that will contain the name of the top 30 differentially expressed genes (NA in case they are not)
+#df$delabel <- ifelse(df$GeneSymbol %in% head(df[order(df$P.Value), "GeneSymbol"], 10), df$GeneSymbol, NA)
+#above line is't working, but the dfs is already sorted in ascending p value so this works
+df$delabel<- NA
+df$delabel[1:10]<- df$GeneSymbol[1:10]
+```
+
+```{r}
+#Set Theme
+theme_set(theme_classic(base_size = 20) +
+            theme(
+              axis.title.y = element_text(face = "bold", margin = margin(0,20,0,0), size = 16, color = 'black'),
+              axis.title.x = element_text(hjust = 0.5, face = "bold", margin = margin(20,0,0,0), size = 16, color = 'black'),
+              plot.title = element_text(hjust = 0.5)
+            ))
+
+
+# Edit axis labels and limits
+ggplot(data = df, aes(x = logFC, y =-log10(adj.P.Val), col = diffexpressed,label=delabel)) +
+  geom_vline(xintercept = c(-1, 1), col = "gray", linetype = 'dashed') +
+  geom_hline(yintercept = -log10(0.05), col = "gray", linetype = 'dashed') + 
+  geom_point(size = 2) + 
+  scale_color_manual(values = c("#0000FF", "grey", "#FF0000"), # to set the colours of our variable  
+                     labels = c("Downregulated", "Not significant", "Upregulated")) + # to set the labels in case we want to overwrite the categories from the dataframe (UP, DOWN, NO)
+  coord_cartesian(ylim = c(0, 10), xlim = c(-5, 5)) + # since some genes can have minuslog10padj of inf, we set these limits
+  labs(color="", #legend_title, 
+       x = expression("Log"[2]*"(FC)"), y = expression("-Log"[10]*"(Adjusted P-Value)")) + 
+  scale_x_continuous(breaks = seq(-10, 10, 2))+ # to customise the breaks in the x axis
+  geom_text_repel(max.overlaps = Inf)
+
+ggsave(file = "./SF_vs_SG.tiff", width = 7, height = 7, dpi = 300, device = "tiff", units = "in")
+```
